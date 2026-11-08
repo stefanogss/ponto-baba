@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testes do Ponto Doméstico</title>
+<style>
+  body { font: 16px/1.4 system-ui, sans-serif; margin: 24px; color: #1a1a1a; background: #fff; }
+  h1 { font-size: 22px; }
+  .resumo { font-size: 20px; font-weight: 700; margin: 12px 0 20px; }
+  .ok { color: #0a7a32; } .falha { color: #b3261e; }
+  table { border-collapse: collapse; width: 100%; max-width: 1000px; }
+  td { border-bottom: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
+  td:first-child { width: 32px; font-size: 20px; }
+  small { color: #b3261e; display: block; }
+</style>
+</head>
+<body>
+<h1>Testes automatizados das regras de cálculo</h1>
+<p>Executa as funções de <code>calculo.js</code> (o mesmo código copiado para <code>Calculo.gs</code> no Apps Script).</p>
+<div class="resumo" id="resumo">Executando…</div>
+<table id="tabela"></table>
+<script src="calculo.js"></script>
+<script src="tests.js"></script>
+<script>
+  var res = executarTestes(Calculo);
+  var falhas = res.filter(function (r) { return !r.ok; }).length;
+  document.getElementById('resumo').innerHTML = falhas
+    ? '<span class="falha">' + falhas + ' de ' + res.length + ' testes falharam.</span>'
+    : '<span class="ok">Todos os ' + res.length + ' testes passaram.</span>';
+  document.getElementById('tabela').innerHTML = res.map(function (r) {
+    return '<tr><td class="' + (r.ok ? 'ok">✔' : 'falha">✘') + '</td><td>' + r.nome.replace(/</g, '&lt;') +
+      (r.detalhe ? '<small>' + r.detalhe.replace(/</g, '&lt;') + '</small>' : '') + '</td></tr>';
+  }).join('');
+  window.RESULTADO_TESTES = { total: res.length, falhas: falhas };
+</script>
+</body>
+</html>

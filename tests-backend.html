@@ -1,0 +1,236 @@
+<!doctype html><meta charset="utf-8"><title>Testes do backend (simulação)</title><body><p>Simula o Apps Script no navegador (planilha, Drive, e-mail e relógio falsos) e exercita o backend de ponta a ponta. Não acessa nenhum dado real.</p><pre id="o">rodando…</pre><script>
+var OUT = [], MAILS = [], LOGS = [];
+function out(s) { OUT.push(s); }
+/* ---------- relógio controlável ---------- */
+var RealDate = Date, AGORA = RealDate.UTC(2026, 10, 9, 12, 2, 0); // 09:02 SP
+function FakeDate() { if (!arguments.length) return new RealDate(AGORA); return new (Function.prototype.bind.apply(RealDate, [null].concat([].slice.call(arguments))))(); }
+FakeDate.UTC = RealDate.UTC; FakeDate.now = function () { return AGORA; }; FakeDate.parse = RealDate.parse; FakeDate.prototype = RealDate.prototype;
+window.Date = FakeDate;
+function setHora(iso) { AGORA = RealDate.parse(iso + '-03:00'); }
+/* ---------- mocks GAS ---------- */
+var sheets = {};
+function Sheet(n) { this.name = n; this.d = []; }
+Sheet.prototype = {
+  getLastRow: function () { return this.d.length; }, getMaxRows: function () { return 1000; }, setFrozenRows: function () {},
+  getRange: function (r, c, nr, nc) { var s = this; nr = nr || 1; nc = nc || 1;
+    var R = { setNumberFormat: function () { return R; }, setFontWeight: function () { return R; }, setBackground: function () { return R; },
+      setValues: function (v) { for (var i = 0; i < nr; i++) { s.d[r - 1 + i] = s.d[r - 1 + i] || []; for (var j = 0; j < nc; j++) s.d[r - 1 + i][c - 1 + j] = String(v[i][j]); } return R; },
+      setValue: function (v) { s.d[r - 1] = s.d[r - 1] || []; s.d[r - 1][c - 1] = String(v); return R; },
+      getDisplayValues: function () { var o = []; for (var i = 0; i < nr; i++) { var row = []; for (var j = 0; j < nc; j++) row.push(((s.d[r - 1 + i] || [])[c - 1 + j]) || ''); o.push(row); } return o; },
+      getDisplayValue: function () { return ((s.d[r - 1] || [])[c - 1]) || ''; } };
+    return R; },
+  protect: function () { return { setDescription: function () {}, removeEditors: function () {}, getEditors: function () { return []; }, canDomainEdit: function () { return false; } }; },
+  getProtections: function () { return []; }
+};
+var ss = { getId: function () { return 'ID'; }, setSpreadsheetTimeZone: function () {}, setSpreadsheetLocale: function () {},
+  getSheetByName: function (n) { return sheets[n] || null; }, insertSheet: function (n) { return (sheets[n] = new Sheet(n)); },
+  getSheets: function () { return Object.values(sheets); }, deleteSheet: function () {} };
+var SpreadsheetApp = { getActiveSpreadsheet: function () { return ss; }, openById: function () { return ss; }, ProtectionType: { SHEET: 1 } };
+function hexToBytes(h) { var b = []; for (var i = 0; i < h.length; i += 2) { var v = parseInt(h.substr(i, 2), 16); b.push(v > 127 ? v - 256 : v); } return b; }
+var Utilities = {
+  DigestAlgorithm: { SHA_256: 1 }, Charset: { UTF_8: 1 },
+  computeDigest: function (a, v) { return hexToBytes(Calculo.sha256(typeof v === 'string' ? v : JSON.stringify(v))); },
+  getUuid: function () { return crypto.randomUUID(); },
+  formatDate: function (d, tz, f) {
+    var p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(d);
+    var D = p.slice(0, 10), T = p.slice(11);
+    if (f === 'yyyy-MM-dd') return D; if (f === 'HH:mm:ss') return T; if (f === "yyyy-MM-dd'T'HH:mm:ss") return D + 'T' + T;
+    if (f === 'yyMMddHHmmss') return (D + T).replace(/[-:]/g, '').slice(2); return p; },
+  newBlob: function (data, mime, name) { var b = { data: data, getBytes: function () { return String(data).split('').map(function (c) { return c.charCodeAt(0) & 255; }); }, getAs: function () { return b; }, setName: function () { return b; } }; return b; },
+  base64Decode: function (s) { return atob(s).split('').map(function (c) { return c.charCodeAt(0); }); }
+};
+var PROPS = {};
+var PropertiesService = { getScriptProperties: function () { return { getProperty: function (k) { return k in PROPS ? PROPS[k] : null; }, setProperty: function (k, v) { PROPS[k] = String(v); }, deleteProperty: function (k) { delete PROPS[k]; } }; } };
+var CACHE = {};
+var CacheService = { getScriptCache: function () { return { get: function (k) { return CACHE[k] || null; }, put: function (k, v) { CACHE[k] = v; }, remove: function (k) { delete CACHE[k]; } }; } };
+var LockService = { getScriptLock: function () { return { waitLock: function () {}, releaseLock: function () {} }; } };
+var ContentService = { createTextOutput: function (s) { return { s: s, setMimeType: function () { return this; } }; }, MimeType: { JSON: 1 } };
+var MailApp = { sendEmail: function (o) { MAILS.push(o); } };
+var trig = { timeBased: function () { return trig; }, atHour: function () { return trig; }, everyDays: function () { return trig; }, inTimezone: function () { return trig; }, after: function () { return trig; }, create: function () {} };
+var ScriptApp = { getProjectTriggers: function () { return []; }, deleteTrigger: function () {}, newTrigger: function () { return trig; } };
+var nArq = 0, folder = { getId: function () { return 'F'; }, createFolder: function () { return folder; }, createFile: function () { nArq++; return { getId: function () { return 'arq' + nArq; }, getUrl: function () { return 'https://drive/arq' + nArq; } }; } };
+var DriveApp = { createFolder: function () { return folder; }, getFolderById: function () { return folder; } };
+var Session = { getActiveUser: function () { return { getEmail: function () { return 'dono@exemplo'; } }; } };
+var UrlFetchApp = { fetch: function () {} };
+var console_log = console.log; console.log = function (s) { LOGS.push(String(s)); console_log.apply(console, arguments); };
+
+function post(acao, dados) { var r = JSON.parse(doPost({ postData: { contents: JSON.stringify(Object.assign({ acao: acao }, dados || {})) } }).s); return r; }
+var falhas = 0;
+function check(nome, cond, extra) { if (!cond) falhas++; out((cond ? 'OK   ' : 'FALHA ') + nome + (cond ? '' : '  → ' + JSON.stringify(extra).slice(0, 600))); }
+
+(async function () {
+  var arqs = ['Code', 'Calculo', 'Dados', 'Auditoria', 'Config', 'Ponto', 'Admin', 'Gestao', 'Espelho', 'Fechamento', 'Comprovantes', 'Setup'];
+  for (var a of arqs) (0, eval)(await (await fetch('apps-script/' + a + '.gs?' + RealDate.now())).text());
+  try {
+    setHora('2026-11-08T10:00:00');
+    setup();
+    var senha = (LOGS.filter(function (l) { return /SENHA INICIAL/.test(l); })[0] || '').split(': ')[1].split(' ')[0];
+    check('setup gera senha', !!senha);
+    check('feriados carregados', sheets.Feriados.d.length > 50, sheets.Feriados.d.length);
+    var nomes = post('adminNomes');
+    check('adminNomes', nomes.ok && nomes.nomes.length === 2, nomes);
+    var errado = post('login', { nome: 'Administrador 1', senha: 'x' });
+    check('login com senha errada recusado', !errado.ok && errado.codigo === 'SENHA', errado);
+    var L = post('login', { nome: 'Administrador 1', senha: senha, ip: '1.1.1.1' });
+    check('login', L.ok, L); var S = L.sessao;
+    var adm = function (acao, d) { return post(acao, Object.assign({ sessao: S, ip: '200.0.0.1' }, d || {})); };
+    var semSessao = post('espelho', { mes: '2026-11' });
+    check('admin sem sessão recusado', !semSessao.ok && semSessao.codigo === 'SESSAO', semSessao);
+    var cfgs = adm('configSalvar', { alteracoes: [{ chave: 'email_empregada', valor: 'baba@exemplo.com' }, { chave: 'emails_admins', valor: 'a@exemplo.com,b@exemplo.com' },
+      { chave: 'primeiro_mes_sistema', valor: '2026-11' }], justificativa: 'configuração inicial' });
+    check('config salva', cfgs.ok && cfgs.config.email_empregada === 'baba@exemplo.com', cfgs);
+    var tab = adm('dispositivoCadastrar', { apelido: 'Tablet da casa', exige_rede: false });
+    var cel = adm('dispositivoCadastrar', { apelido: 'Celular da babá', exige_rede: true });
+    check('dispositivos cadastrados', tab.ok && cel.ok && tab.token.length > 40, [tab, cel]);
+    var naoAut = post('estado', { token: 'xyz' });
+    check('aparelho não cadastrado recusado', !naoAut.ok && naoAut.codigo === 'NAO_AUTORIZADO', naoAut);
+    var T = tab.token, C = cel.token;
+
+    // ---- segunda 09/11: dia normal com 1 min de variação na saída
+    setHora('2026-11-09T09:02:10');
+    var e1 = post('marcar', { token: T, tipo: 'ENTRADA', ip: '9.9.9.9' });
+    check('entrada registrada com hora do servidor', e1.ok && e1.marcacao.hora === '09:02' && e1.estado.proxima === 'INICIO_INTERVALO', e1);
+    var dup = post('marcar', { token: T, tipo: 'INICIO_INTERVALO', ip: '9.9.9.9' });
+    check('toque duplo em menos de 60 s recusado', !dup.ok && dup.codigo === 'DUPLO', dup);
+    var seq = post('marcar', { token: T, tipo: 'FIM_INTERVALO', ip: '9.9.9.9' });
+    check('fora de sequência recusado', !seq.ok && (seq.codigo === 'SEQUENCIA' || seq.codigo === 'DUPLO'), seq);
+    setHora('2026-11-09T12:00:00'); post('marcar', { token: T, tipo: 'INICIO_INTERVALO' });
+    setHora('2026-11-09T12:30:00'); post('marcar', { token: T, tipo: 'FIM_INTERVALO' });
+    setHora('2026-11-09T17:31:00'); var s1 = post('marcar', { token: T, tipo: 'SAIDA' });
+    check('dia completo', s1.ok && s1.estado.proxima === null, s1);
+
+    // ---- terça 10/11: celular fora da rede, depois autoriza; saída sem intervalo
+    setHora('2026-11-10T09:00:00');
+    var rede = post('marcar', { token: C, tipo: 'ENTRADA', ip: '7.7.7.7' });
+    check('celular fora da rede recusado', !rede.ok && rede.codigo === 'REDE', rede);
+    var aut = adm('redeAutorizarAtual', { ip: '7.7.7.7' });
+    check('autorizar rede atual', aut.ok && aut.ips.indexOf('7.7.7.7') >= 0, aut);
+    var ok2 = post('marcar', { token: C, tipo: 'ENTRADA', ip: '7.7.7.7' });
+    check('celular na rede autorizada', ok2.ok, ok2);
+    setHora('2026-11-10T17:30:00');
+    var semPerg = post('marcar', { token: C, tipo: 'SAIDA', ip: '7.7.7.7' });
+    check('saída sem intervalo exige resposta', !semPerg.ok && semPerg.codigo === 'PERGUNTA_INTERVALO', semPerg);
+    var s2 = post('marcar', { token: C, tipo: 'SAIDA', ip: '7.7.7.7', intervalo: { fez: false } });
+    check('saída com "não fiz intervalo"', s2.ok && s2.estado.proxima === null, s2);
+
+    // ---- quarta 11/11: saída sem intervalo com "fiz intervalo"
+    setHora('2026-11-11T09:00:00'); post('marcar', { token: T, tipo: 'ENTRADA' });
+    setHora('2026-11-11T17:30:00');
+    var s3 = post('marcar', { token: T, tipo: 'SAIDA', intervalo: { fez: true, inicio: '12:00', fim: '12:20' } });
+    check('saída com "fiz intervalo" (20 min)', s3.ok && s3.estado.marcas.length === 4, s3);
+
+    // ---- quinta 12/11: só entrada (dia inconsistente); correção da empregada no mesmo dia
+    setHora('2026-11-12T09:10:00'); var e4 = post('marcar', { token: T, tipo: 'ENTRADA' });
+    setHora('2026-11-12T10:00:00');
+    var c1 = post('corrigirHoje', { token: T, operacao: 'ANULAR', ref_id: e4.marcacao.id, motivo: 'ERRADO' });
+    var c2 = post('corrigirHoje', { token: T, operacao: 'INCLUIR', tipo: 'ENTRADA', hora: '09:00', motivo: 'ESQUECI' });
+    check('correção pela empregada (anular + incluir)', c1.ok && c2.ok && c2.estado.marcas.length === 1 && c2.estado.marcas[0].hora === '09:00' && c2.estado.marcas[0].correcao, [c1, c2]);
+
+    // ---- sexta 13/11: offline
+    setHora('2026-11-13T18:00:00');
+    var off = post('sincronizar', { token: T, relogio_envio_ms: AGORA - 15 * 60000, itens: [
+      { id_local: 'a1', tipo: 'ENTRADA', hora_aparelho: '2026-11-13T09:00:00' }, { id_local: 'a2', tipo: 'INICIO_INTERVALO', hora_aparelho: '2026-11-13T12:00:00' },
+      { id_local: 'a3', tipo: 'FIM_INTERVALO', hora_aparelho: '2026-11-13T12:30:00' }, { id_local: 'a4', tipo: 'SAIDA', hora_aparelho: '2026-11-13T17:30:00' }] });
+    check('offline sincronizado', off.ok && off.resultados.every(function (x) { return x.status === 'OK'; }), off);
+    var off2 = post('sincronizar', { token: T, itens: [{ id_local: 'a1', tipo: 'ENTRADA', hora_aparelho: '2026-11-13T09:00:00' }] });
+    check('offline não duplica', off2.ok && off2.resultados[0].status === 'DUPLICADO', off2);
+    var evOff = ler_('Eventos').filter(function (e) { return e.origem === 'OFFLINE'; })[0]; CACHE_ = {};
+    check('offline com alertas', /Horário do aparelho/.test(evOff.alertas) && /Rede não verificada/.test(evOff.alertas) && /divergente/.test(evOff.alertas), evOff);
+
+    // ---- sábado 14/11 4h; domingo 15/11 (feriado também) 4h
+    setHora('2026-11-14T08:00:00'); post('marcar', { token: T, tipo: 'ENTRADA' }); setHora('2026-11-14T12:00:00'); post('marcar', { token: T, tipo: 'SAIDA', intervalo: { fez: false } });
+    setHora('2026-11-15T08:00:00'); post('marcar', { token: T, tipo: 'ENTRADA' }); setHora('2026-11-15T12:00:00'); post('marcar', { token: T, tipo: 'SAIDA', intervalo: { fez: false } });
+
+    // ---- espelho
+    setHora('2026-11-16T08:00:00');
+    var esp = adm('espelho', { mes: '2026-11' });
+    var dia = function (d) { return esp.dias.filter(function (x) { return x.data === d; })[0]; };
+    check('espelho 09/11: tolerância, saldo 0', dia('2026-11-09').saldo === 0 && dia('2026-11-09').tolerancia, dia('2026-11-09'));
+    check('espelho 10/11: 30 min suprimidos', dia('2026-11-10').suprimido === 30 && dia('2026-11-10').saldo === 0, dia('2026-11-10'));
+    check('espelho 11/11: 10 min suprimidos, correção', dia('2026-11-11').suprimido === 10 && dia('2026-11-11').correcoes === 2, dia('2026-11-11'));
+    check('espelho 12/11: inconsistente', dia('2026-11-12').status === 'INCONSISTENTE', dia('2026-11-12'));
+    check('espelho 13/11: offline', dia('2026-11-13').offline === 4 && dia('2026-11-13').saldo === 0, dia('2026-11-13'));
+    check('espelho 14/11 sábado: 4h extra', dia('2026-11-14').extra === 240, dia('2026-11-14'));
+    check('espelho 15/11 domingo/feriado: 4h DSR', dia('2026-11-15').dsrFeriado === 240, dia('2026-11-15'));
+    check('espelho 02/11 (Finados): feriado', dia('2026-11-02').status === 'FERIADO', dia('2026-11-02'));
+    check('espelho 03/11: falta (antes de começar a usar)', dia('2026-11-03').status === 'FALTA', dia('2026-11-03'));
+    var pend = adm('pendencias');
+    check('pendências listam inconsistência e recusa de rede', pend.ok && pend.pendencias.inconsistentes.some(function (x) { return x.data === '2026-11-12'; }) && pend.pendencias.recusasRede.length === 1, pend.pendencias);
+
+    // ---- correção do admin, abono e folga
+    var corr = adm('corrigir', { data: '2026-11-12', operacao: 'INCLUIR', tipo: 'SAIDA', hora: '17:30', justificativa: 'Esqueceu a saída; confirmado com ela' });
+    check('correção do admin com antes/depois', corr.ok && corr.antes.status === 'INCONSISTENTE' && corr.depois.status === 'NORMAL', corr);
+    var semJust = adm('corrigir', { data: '2026-11-12', operacao: 'INCLUIR', tipo: 'SAIDA', hora: '17:30', justificativa: '' });
+    check('correção sem justificativa recusada', !semJust.ok, semJust);
+    var ab = adm('abonoLancar', { data: '2026-11-03', integral: true, motivo: 'Consulta médica com atestado' });
+    var fol = adm('folgaLancar', { data: '2026-11-04', integral: true, obs: 'Folga compensatória combinada' });
+    check('abono e folga', ab.ok && fol.ok, [ab, fol]);
+    var fer = adm('feriasLancar', { aquisitivo_inicio: '2025-06-04', inicio: '2027-01-04', dias: 14, comunicado_em: '2026-11-16' });
+    var fer2 = adm('feriasLancar', { aquisitivo_inicio: '2025-06-04', inicio: '2027-03-01', dias: 16, comunicado_em: '2026-11-16' });
+    var fer3 = adm('feriasLancar', { aquisitivo_inicio: '2026-06-04', inicio: '2027-07-01', dias: 10 });
+    check('férias 14 + 16', fer.ok && fer2.ok, [fer, fer2]);
+    check('férias parte única de 10 (resta 20)', fer3.ok, fer3);
+    var fer4 = adm('feriasLancar', { aquisitivo_inicio: '2025-06-04', inicio: '2027-05-01', dias: 1 });
+    check('terceiro período recusado', !fer4.ok, fer4);
+    ['espelho', 'banco', 'extras', 'ausencias', 'correcoes', 'offline', 'ferias', 'contador'].forEach(function (t) {
+      var r = adm('relatorio', { tipo: t, de: '2026-11-01', ate: '2026-11-30', comValores: true });
+      check('relatório ' + t, r.ok && r.colunas.length > 0, r);
+    });
+    var val = adm('valores', { mes: '2026-11' });
+    check('valores estimados', val.ok && val.salarioHora === 11.61, val);
+    ['adminHoje', 'banco', 'folgas', 'abonos', 'ferias', 'fechamentos', 'configLer', 'dispositivos'].forEach(function (t) { var r = adm(t); check('tela ' + t, r.ok, r); });
+    var det = adm('diaDetalhe', { data: '2026-11-12' });
+    check('detalhe do dia mostra anulada', det.ok && det.eventos.some(function (e) { return e.anulado_por; }) && det.log.length >= 4, det);
+
+    // ---- comprovante diário
+    setHora('2026-11-16T20:05:00'); MAILS = [];
+    comprovanteDiario();
+    check('comprovante diário enviado a 3 destinatários', MAILS.length === 3 && /Ponto de 16\/11\/2026/.test(MAILS[0].subject), MAILS.length);
+
+    // ---- fechamento
+    setHora('2026-11-30T10:00:00');
+    var cedo = adm('fechar', { mes: '2026-11' });
+    check('fechamento antes do mês seguinte recusado', !cedo.ok, cedo);
+    setHora('2026-12-01T10:00:00'); MAILS = [];
+    var fe = adm('fechar', { mes: '2026-11' });
+    check('fechamento de novembro', fe.ok && fe.resumo.versao === 1 && MAILS.length === 3 && MAILS[0].attachments.length === 1, fe);
+    out('     resumo: ' + JSON.stringify(fe.resumo && { extra: fe.resumo.extra, debito: fe.resumo.debito, folgas: fe.resumo.folgas, saldo: fe.resumo.saldo_liquido, pagar: fe.resumo.a_pagar_total, dsr: fe.resumo.dsr_feriado, sup: fe.resumo.suprimido, banco: fe.resumo.saldo_banco_final }));
+    var bloq = adm('corrigir', { data: '2026-11-20', operacao: 'INCLUIR', tipo: 'ENTRADA', hora: '09:00', justificativa: 'teste de bloqueio' });
+    check('mês fechado bloqueia correção', !bloq.ok && bloq.codigo === 'MES_FECHADO', bloq);
+    var est = post('estado', { token: T });
+    check('ciência pendente aparece na tela', est.ok && est.ciencia && est.ciencia.mes === '2026-11', est);
+    var rm = post('resumoMes', { token: T });
+    var ci = post('ciencia', { token: T, mes: '2026-11', versao: 1 });
+    check('ciência digital', rm.ok && rm.resumo.mes === '2026-11' && ci.ok && post('estado', { token: T }).ciencia === null, [rm, ci]);
+    var re = adm('reabrir', { mes: '2026-11', justificativa: 'Faltou lançar abono do dia 20' });
+    check('reabertura', re.ok && re.fechamento.status === 'REABERTO', re);
+    var bancoReab = adm('banco');
+    check('banco estornado na reabertura', bancoReab.estado.saldo === 0, bancoReab.estado);
+    adm('abonoLancar', { data: '2026-11-20', integral: true, motivo: 'Atestado médico apresentado depois' });
+    var fe2 = adm('fechar', { mes: '2026-11' });
+    check('novo fechamento gera versão 2', fe2.ok && fe2.resumo.versao === 2, fe2);
+    check('nova ciência pendente para a versão 2', post('estado', { token: T }).ciencia.versao === 2);
+
+    // ---- revogação
+    var rv = adm('dispositivoRevogar', { id: adm('dispositivos').dispositivos.filter(function (d) { return d.apelido === 'Celular da babá'; })[0].id, justificativa: 'Celular trocado' });
+    var depois = post('marcar', { token: C, tipo: 'ENTRADA', ip: '7.7.7.7' });
+    check('aparelho revogado não marca', rv.ok && !depois.ok && depois.codigo === 'NAO_AUTORIZADO', depois);
+
+    // ---- integridade
+    var v1 = adm('verificarIntegridade');
+    check('integridade íntegra', v1.ok && v1.resultado.ok, v1);
+    var linha = 10; sheets.Log.d[linha - 1][ABAS.Log.indexOf('justificativa')] = 'adulterado';
+    var v2 = adm('verificarIntegridade');
+    check('integridade detecta alteração manual da linha ' + linha, v2.ok && !v2.resultado.ok && v2.resultado.linha === linha, v2.resultado);
+
+    // ---- bloqueio de login
+    for (var i = 0; i < 5; i++) post('login', { nome: 'Administrador 2', senha: 'errada' });
+    var bl = post('login', { nome: 'Administrador 2', senha: senha });
+    check('bloqueio após 5 tentativas', !bl.ok && bl.codigo === 'BLOQUEADO', bl);
+    out('\nLinhas: Eventos ' + sheets.Eventos.d.length + ', Log ' + sheets.Log.d.length + ', BancoHoras ' + sheets.BancoHoras.d.length + ', Fechamentos ' + sheets.Fechamentos.d.length);
+  } catch (e) { falhas++; out('EXCEÇÃO: ' + e.stack); }
+  out('\n' + (falhas ? falhas + ' FALHA(S)' : 'TUDO OK'));
+  document.getElementById('o').textContent = OUT.join('\n');
+  window.FIM = true;
+})();
+</script>
